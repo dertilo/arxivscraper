@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 import datetime
 import time
 import sys
+from typing import Generator
+
 PYTHON3 = sys.version_info[0] == 3
 if PYTHON3:
     from urllib.parse import urlencode
@@ -96,19 +98,19 @@ class Scraper(object):
     Returning all eprints from
     """
 
-    def __init__(self, category, date_from=None, date_until=None, t=30, filters={}):
+    def __init__(self, category, date_from=None, date_until=None, retry_delay_seconds=30, filters={}):
         self.cat = str(category)
-        self.t = t
+        self.t = retry_delay_seconds
         DateToday = datetime.date.today()
         if date_from is None:
-            self.f = str(DateToday.replace(day=1))
+            self.date_from = str(DateToday.replace(day=1))
         else:
-            self.f = date_from
+            self.date_from = date_from
         if date_until is None:
-            self.u = str(DateToday)
+            self.date_until = str(DateToday)
         else:
-            self.u = date_until
-        self.url = BASE + 'from=' + self.f + '&until=' + self.u + '&metadataPrefix=arXiv&set=%s' % self.cat
+            self.date_until = date_until
+        self.url = BASE + 'from=' + self.date_from + '&until=' + self.date_until + '&metadataPrefix=arXiv&set=%s' % self.cat
         self.filters = filters
         if not self.filters:
             self.append_all = True
@@ -116,56 +118,50 @@ class Scraper(object):
             self.append_all = False
             self.keys = filters.keys()
 
-    def scrape(self):
-        t0 = time.time()
+    def scrape(self,num_records=sys.maxsize)->Generator:
+        def filter(record):
+            take_it = False
+            for key in self.keys:
+                for word in self.filters[key]:
+                    if word.lower() in record[key]:
+                        take_it = True
+            return take_it
+
+        g = (record for record in self.scrape_unfiltered() if filter(record))
+        return (next(g) for _ in range(num_records))
+
+    def scrape_unfiltered(self):
         url = self.url
         print(url)
-        ds = []
-        k = 1
         while True:
-            print('fetching up to ', 1000 * k, 'records...')
             try:
                 response = urlopen(url)
             except HTTPError as e:
                 if e.code == 503:
-                    to = int(e.hdrs.get('retry-after', 30))
                     print('Got 503. Retrying after {0:d} seconds.'.format(self.t))
                     time.sleep(self.t)
                     continue
                 else:
                     raise
-            k += 1
+
             xml = response.read()
             root = ET.fromstring(xml)
             records = root.findall(OAI + 'ListRecords/' + OAI + 'record')
             for record in records:
                 meta = record.find(OAI + 'metadata').find(ARXIV + 'arXiv')
                 record = Record(meta).output()
-                if self.append_all:
-                    ds.append(record)
-                else:
-                    save_record = False
-                    for key in self.keys:
-                        for word in self.filters[key]:
-                            if word.lower() in record[key]:
-                                save_record = True
-
-                    if save_record:
-                        ds.append(record)
+                yield record
 
             try:
                 token = root.find(OAI + 'ListRecords').find(OAI + 'resumptionToken')
             except:
-                return 1
+                break # TODO(tilo): when is this happening?
+
             if token is None or token.text is None:
                 break
             else:
                 url = BASE + 'resumptionToken=%s' % token.text
 
-        t1 = time.time()
-        print('fetching is completed in {0:.1f} seconds.'.format(t1 - t0))
-        print ('Total number of records {:d}'.format(len(ds)))
-        return ds
 
 
 def search_all(df, col, *words):
