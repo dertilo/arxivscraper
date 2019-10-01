@@ -44,6 +44,7 @@ class Record(object):
         self.updated = self._get_text(ARXIV, 'updated')
         self.doi = self._get_text(ARXIV, 'doi')
         self.authors = self._get_authors()
+        self.affiliation = self._get_affiliation()
 
     def _get_text(self, namespace, tag):
         """Extracts text from an xml field"""
@@ -53,20 +54,33 @@ class Record(object):
             return ''
 
     def _get_authors(self):
+        authors_xml = self.xml.findall(ARXIV + 'authors/' + ARXIV + 'author')
+        last_names = [author.find(ARXIV + 'keyname').text.lower() for author in authors_xml]
+        first_names = [author.find(ARXIV + 'forenames').text.lower() for author in authors_xml]
+        full_names = [a+' '+b for a,b in zip(first_names, last_names)]
+        return full_names
+
+    def _get_affiliation(self):
         authors = self.xml.findall(ARXIV + 'authors/' + ARXIV + 'author')
-        authors = [author.find(ARXIV + 'keyname').text.lower() for author in authors]
-        return authors
+        try:
+            affiliation = [author.find(ARXIV + 'affiliation').text.lower() for author in authors]
+            return affiliation
+        except:
+            return []
 
     def output(self):
-        d = {'title': self.title,
-         'id': self.id,
-         'abstract': self.abstract,
-         'categories': self.cats,
-         'doi': self.doi,
-         'created': self.created,
-         'updated': self.updated,
-         'authors': self.authors,
-         'url': self.url}
+        d = {
+            'title': self.title,
+            'id': self.id,
+            'abstract': self.abstract,
+            'categories': self.cats,
+            'doi': self.doi,
+            'created': self.created,
+            'updated': self.updated,
+            'authors': self.authors,
+            'affiliation': self.affiliation,
+            'url': self.url
+             }
         return d
 
 
@@ -81,21 +95,28 @@ class Scraper(object):
     Paramters
     ---------
     category: str
-    The category of scraped records
+        The category of scraped records
     data_from: str
-    starting date in format 'YYYY-MM-DD'. Updated eprints are included even if
-    they were created outside of the given date range. Default: first day of current month.
+        starting date in format 'YYYY-MM-DD'. Updated eprints are included even if
+        they were created outside of the given date range. Default: first day of current month.
     date_until: str
-    final date in format 'YYYY-MM-DD'. Updated eprints are included even if
-    they were created outside of the given date range. Default: today.
+        final date in format 'YYYY-MM-DD'. Updated eprints are included even if
+        they were created outside of the given date range. Default: today.
     t: int
     Waiting time between subsequent calls to API, triggred by Error 503.
     filter: dictionary
-    A dictionary where keys are used to limit the saved results. Possible keys:
-    subcats, author, title, abstract. See the example, below.
+        A dictionary where keys are used to limit the saved results. Possible keys:
+        subcats, author, title, abstract. See the example, below.
 
     Example:
     Returning all eprints from
+
+    ```
+        import arxivscraper.arxivscraper as ax
+        scraper = ax.Scraper(category='stat',date_from='2017-12-23',date_until='2017-12-25',t=10,
+                 filters={'affiliation':['facebook'],'abstract':['learning']})
+        output = scraper.scrape()
+    ```
     """
 
     def __init__(self, category, date_from=None, date_until=None, retry_delay_seconds=30, filters={}):
